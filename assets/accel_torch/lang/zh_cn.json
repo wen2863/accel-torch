@@ -1,0 +1,8 @@
+{
+  "itemGroup.accel_torch.accel_torch": "加速火把",
+  "block.accel_torch.accel_torch": "加速火把",
+  "block.accel_torch.advanced_accel_torch": "高级加速火把",
+  "block.accel_torch.super_accel_torch": "超级加速火把",
+  "item.accel_torch.accel_clock": "加速时钟",
+  "item.accel_torch.super_accel_clock": "超级加速时钟"
+}

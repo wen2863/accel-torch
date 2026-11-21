@@ -1,0 +1,8 @@
+{
+  "itemGroup.accel_torch.accel_torch": "Accel Torches",
+  "block.accel_torch.accel_torch": "Accel Torch",
+  "block.accel_torch.advanced_accel_torch": "Advanced Accel Torch",
+  "block.accel_torch.super_accel_torch": "Super Accel Torch",
+  "item.accel_torch.accel_clock": "Accel Clock",
+  "item.accel_torch.super_accel_clock": "Super Accel Clock"
+}

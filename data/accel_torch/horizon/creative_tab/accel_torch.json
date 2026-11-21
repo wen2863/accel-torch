@@ -1,0 +1,11 @@
+{
+  "title": "itemGroup.accel_torch.accel_torch",
+  "icon": "accel_torch:accel_torch",
+  "items": [
+    "accel_torch:accel_torch",
+    "accel_torch:advanced_accel_torch",
+    "accel_torch:super_accel_torch",
+    "accel_torch:accel_clock",
+    "accel_torch:super_accel_clock"
+  ]
+}

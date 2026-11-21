@@ -1,0 +1,7 @@
+{
+  "variants": {
+    "": {
+      "model": "accel_torch:block/accel_torch"
+    }
+  }
+}

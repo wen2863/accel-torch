@@ -1,0 +1,6 @@
+{
+  "model": {
+    "type": "minecraft:model",
+    "model": "accel_torch:item/super_accel_clock"
+  }
+}

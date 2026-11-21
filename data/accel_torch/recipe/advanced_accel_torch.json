@@ -1,0 +1,16 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "key": {
+    "C": "accel_torch:accel_clock",
+    "T": "minecraft:torch"
+  },
+  "pattern": [
+    " C ",
+    "CTC",
+    " C "
+  ],
+  "result": {
+    "count": 1,
+    "id": "accel_torch:advanced_accel_torch"
+  }
+}

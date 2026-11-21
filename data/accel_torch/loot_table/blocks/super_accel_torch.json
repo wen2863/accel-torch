@@ -1,0 +1,18 @@
+{
+  "type": "minecraft:block",
+  "pools": [
+    {
+      "condition": {
+        "type": "minecraft:survives_explosion"
+      },
+      "entries": [
+        {
+          "type": "minecraft:item",
+          "name": "accel_torch:super_accel_torch"
+        }
+      ],
+      "rolls": 1
+    }
+  ],
+  "random_sequence": "accel_torch:blocks/super_accel_torch"
+}

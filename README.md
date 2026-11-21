@@ -28,6 +28,13 @@ This writes `target/horizon-mod/accel_torch.hmod`. To play it, run
 - `data/accel_torch/` — block, item, recipe, loot table and creative tab declarations.
 - `horizon-mod.toml` — manifest; pins game 26.3, horizon `0a875da`, mixins `e59da90`.
 
+## Credits
+
+Written by **Wen** (concept, block and item textures, in-game testing) together with **DeepSeek**, an AI coding
+assistant that wrote most of `src/lib.rs` (block entity, tick scheduling, config screen, payloads) and set up the
+packaging. Commits that contain AI-written code carry a `Co-authored-by: DeepSeek <noreply@deepseek.com>` trailer.
+Particle sprites started as programmatically generated placeholders and can be replaced freely.
+
 ## Licence
 
 MIT, see `LICENSE`. Torcherino is only an inspiration for the idea and the numbers; nothing is copied from it.

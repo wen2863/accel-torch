@@ -152,8 +152,8 @@ impl Hooks for Mod {
         let _ = REPLY.set(reply);
     }
 
-    /// The client opens the settings screen; the server only swallows the click, so a block
-    /// in hand is not placed against the torch.
+    /// A plain right click on a torch opens the settings screen; sneaking lets the click through
+    /// so a block in hand can still be placed against the torch.
     fn right_click_block(&self, host: HostSide, event: &mut RightClickBlockEvent<'_>) -> Flow {
         // Vanilla offers the click to both hands; only the main hand counts.
         if event.click.hand != Hand::Main {
@@ -162,6 +162,10 @@ impl Hooks for Mod {
         let pos = event.click.pos;
         match host {
             HostSide::Client(host) => {
+                // Sneaking keeps vanilla's placement: the screen would otherwise eat every click.
+                if host.modifiers().shift() {
+                    return Flow::Continue;
+                }
                 let dim = host.dimension().to_owned();
                 let Some(level) = host.level(&dim) else {
                     return Flow::Continue;
@@ -194,13 +198,23 @@ impl Hooks for Mod {
                 }
             }
             HostSide::Server(host) => {
-                let Some(level) = host.level(host.dimension()) else {
+                // The server cannot see the mouse modifiers, but it does see the shift key's
+                // state. A standing player gets the screen (and must not place a block against
+                // the torch); a sneaking one keeps vanilla placement, so the click passes.
+                let dim = host.dimension().to_owned();
+                let Some(level) = host.level(&dim) else {
                     return Flow::Continue;
                 };
                 let Some(block) = level.block(&*host, pos) else {
                     return Flow::Continue;
                 };
                 if tier_of(&*host, block).is_none() {
+                    return Flow::Continue;
+                }
+                let Some(player) = host.players().acting_player() else {
+                    return Flow::Continue;
+                };
+                if player.entity().is_shift_key_down(&*host) == Some(true) {
                     return Flow::Continue;
                 }
             }

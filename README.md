@@ -15,8 +15,10 @@ Right-click a torch for its panel (X/Y/Z size, speed, on/off). A percentage is e
 ## Server cost and access
 
 The random-tick budget is shared by every torch on the server: at most 3000 calls and 3 ms of work per tick,
-reset every server tick, so stacking torches cannot drag the server below 20 TPS. A torch whose area needs more
-than the budget sweeps its box over several ticks with a per-torch cursor, so the whole area is still covered.
+reset every server tick, so stacking torches cannot drag the server below 20 TPS. Every torch that ticked in the
+previous tick takes an equal share of it, so no torch can spend what a later one needs and the order the server
+ticks them in does not matter. A torch whose share is smaller than its area keeps its own cursor and carries on
+from the cell the last pass stopped at, so the whole area is still covered over a few ticks.
 
 The panel asks the server for the torch's real settings when it opens. The server only accepts a change from a
 player in the same level and within 6 blocks of that torch; other packets are ignored and answered with a chat

@@ -106,6 +106,16 @@ static BUDGET_CALLS: AtomicI64 = AtomicI64::new(0);
 static BUDGET_DEADLINE: AtomicU64 = AtomicU64::new(0);
 static CLOCK: OnceLock<Instant> = OnceLock::new();
 
+/// The torches that ticked in the last server tick, so each one takes an equal share of the
+/// budget however the server orders them, and where each one's next pass starts.
+static TORCHES: Mutex<Vec<TorchState>> = Mutex::new(Vec::new());
+
+struct TorchState {
+    pos: [i32; 3],
+    tick: i64,
+    cursor: i64,
+}
+
 /// Done was pressed: the next client tick closes the screen.
 static CLOSE: AtomicBool = AtomicBool::new(false);
 
@@ -710,7 +720,10 @@ impl BlockEntityPart for Torch {
             .game_time(&*host)
             .unwrap_or_else(|| (now_nanos() / 50_000_000) as i64);
         begin_tick(tick);
-        let remaining = (MAX_CALLS_PER_TICK - BUDGET_CALLS.load(Ordering::Relaxed)).max(0);
+        let left = (MAX_CALLS_PER_TICK - BUDGET_CALLS.load(Ordering::Relaxed)).max(0);
+        // This torch's own slice of the tick, so the next torch always has something left.
+        let (share, start) = claim(pos, tick, cells);
+        let remaining = share.min(left);
         if remaining > 0 {
             // How many random ticks one block gets on a pass: its full share, trimmed to what is
             // left of the tick. What a pass does not reach is picked up by the next one.
@@ -720,7 +733,6 @@ impl BlockEntityPart for Torch {
                 .min((remaining / cells).max(1))
                 .min(remaining);
             let visits = (remaining / per_cell).min(cells);
-            let start = start_index(pos, tick, cells);
             let center = (i64::from(rz) * ny + i64::from(ry)) * nx + i64::from(rx);
             let mut visited = 0i64;
             while visited < visits {
@@ -741,6 +753,7 @@ impl BlockEntityPart for Torch {
                 BUDGET_CALLS.fetch_add(per_cell, Ordering::Relaxed);
                 visited += 1;
             }
+            advance(pos, start + visited);
         }
         // Now and then a spark over the flame, so a running torch shows its tier.
         if roll(0.35)
@@ -827,17 +840,42 @@ fn begin_tick(tick: i64) {
     }
 }
 
-/// Where a capped pass starts: from the torch's position and the tick, so two torches never
-/// share a cursor and each covers its area in a different order.
-fn start_index(pos: [i32; 3], tick: i64, cells: i64) -> i64 {
-    let mut hash = 0x9e37_79b9_7f4a_7c15u64;
-    for value in pos {
-        hash = (hash ^ value as i64 as u64).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        hash = hash.rotate_left(23);
+/// The share of the tick's budget this torch may spend, and where its pass starts.
+///
+/// Every torch that ticked in the previous tick takes an equal part of the budget, so a torch
+/// can never spend what a later one would have used: with five running torches each spends a
+/// fifth, in whatever order the server calls them. A pass carries on from the cell the last
+/// one stopped at, so a torch whose share is smaller than its area still covers it over a few
+/// ticks instead of starting over at the same cell.
+fn claim(pos: [i32; 3], tick: i64, cells: i64) -> (i64, i64) {
+    let Ok(mut torches) = TORCHES.lock() else {
+        return (MAX_CALLS_PER_TICK, 0);
+    };
+    // A torch that has not ticked for two ticks is gone (broken, or its chunk unloaded).
+    torches.retain(|torch| tick - torch.tick <= 1);
+    let index = match torches.iter().position(|torch| torch.pos == pos) {
+        Some(index) => index,
+        None => {
+            torches.push(TorchState {
+                pos,
+                tick,
+                cursor: 0,
+            });
+            torches.len() - 1
+        }
+    };
+    torches[index].tick = tick;
+    let share = (MAX_CALLS_PER_TICK / torches.len().max(1) as i64).max(1);
+    (share, torches[index].cursor % cells)
+}
+
+/// Remembers where this torch's next pass starts.
+fn advance(pos: [i32; 3], cursor: i64) {
+    if let Ok(mut torches) = TORCHES.lock()
+        && let Some(torch) = torches.iter_mut().find(|torch| torch.pos == pos)
+    {
+        torch.cursor = cursor;
     }
-    hash ^= tick as u64;
-    hash = hash.wrapping_mul(0x94d0_49bb_1331_11eb);
-    (hash % cells as u64) as i64
 }
 
 /// A small SplitMix64, so the mod needs no crate of its own for the rolls.

@@ -5,7 +5,7 @@
 //! per-torch settings a block entity saves.
 //!
 //! A torch saves its settings in its own block entity compound: active (0|1), speed (a
-//! percentage) and the size of its area sx/sy/sz in blocks, odd numbers up to what its tier
+//! percentage) and how far its area reaches on each axis, sx/sy/sz, odd numbers up to what its tier
 //! may cover - 3 for an accel torch, 9 for an advanced one, 27 for a super one. Right-clicking
 //! opens the screen; the buttons send the changed value to the server, which checks it against
 //! the torch's tier and stores it.
@@ -37,7 +37,7 @@ const STATE_ID: &str = "accel_torch:state";
 /// (odd, so the torch stands in the middle). A speed is a percentage: 100% hands every block in
 /// range one extra random tick per tick (see `block_entity_tick`).
 const MAX_SPEED: i32 = 640_000;
-const MAX_SIDE: i32 = 27;
+const MAX_REACH: i32 = 27;
 
 /// What all the running torches of a server together may spend in one tick: a whole 27x27x27
 /// area at 640000% would be millions of random ticks, far more than a tick can pay for, so the
@@ -444,9 +444,9 @@ impl Screen {
     /// Moves row 0 width, 1 height, 2 depth, 3 speed one step; false when it cannot move.
     fn step(&mut self, row: usize, delta: i32) -> bool {
         match row {
-            0 => bump_side(&mut self.config.sx, delta, self.tier.max_side()),
-            1 => bump_side(&mut self.config.sy, delta, self.tier.max_side()),
-            2 => bump_side(&mut self.config.sz, delta, self.tier.max_side()),
+            0 => bump_side(&mut self.config.sx, delta, self.tier.max_reach()),
+            1 => bump_side(&mut self.config.sy, delta, self.tier.max_reach()),
+            2 => bump_side(&mut self.config.sz, delta, self.tier.max_reach()),
             _ => {
                 let speeds = self.tier.speeds();
                 let index = speeds
@@ -471,8 +471,8 @@ impl Screen {
     }
 }
 
-/// Widens or narrows one side of the area by two blocks, staying odd and inside 1..=max; false
-/// when it did not move.
+/// Widens or narrows the reach by two blocks, staying odd and inside 1..=max; false when it did
+/// not move.
 fn bump_side(value: &mut i32, delta: i32, max: i32) -> bool {
     let next = odd_side(*value + 2 * delta, max);
     if next == *value {
@@ -501,19 +501,19 @@ fn load(host: &dyn Host, level: mod_api::LevelRef, pos: [i32; 3], dim: &str, tie
         z: pos[2],
         active: 0,
         speed: default_speed,
-        sx: 3,
+        sx: 1,
         sy: 1,
-        sz: 3,
+        sz: 1,
         dim: dim.to_owned(),
     };
     if let Some(entity) = host.block_entity(level, pos) {
         if let Some(data) = entity.data(host) {
             config.active = if flag(&data, "active") { 1 } else { 0 };
             config.speed = tier.clamp(int(&data, "speed", default_speed));
-            let max_side = tier.max_side();
-            config.sx = side(&data, "sx", "rx", 3, max_side);
-            config.sy = side(&data, "sy", "ry", 1, max_side);
-            config.sz = side(&data, "sz", "rz", 3, max_side);
+            let max_reach = tier.max_reach();
+            config.sx = odd_side(int(&data, "sx", 1), max_reach);
+            config.sy = odd_side(int(&data, "sy", 1), max_reach);
+            config.sz = odd_side(int(&data, "sz", 1), max_reach);
         }
     }
     config
@@ -570,10 +570,10 @@ fn apply(config: Config, context: &mut dyn IPayloadContext) -> Result<(), String
         Tag::Byte(u8::from(config.active != 0) as i8),
     );
     patch.insert("speed".into(), Tag::Int(tier.clamp(config.speed)));
-    let max_side = tier.max_side();
-    patch.insert("sx".into(), Tag::Int(odd_side(config.sx, max_side)));
-    patch.insert("sy".into(), Tag::Int(odd_side(config.sy, max_side)));
-    patch.insert("sz".into(), Tag::Int(odd_side(config.sz, max_side)));
+    let max_reach = tier.max_reach();
+    patch.insert("sx".into(), Tag::Int(odd_side(config.sx, max_reach)));
+    patch.insert("sy".into(), Tag::Int(odd_side(config.sy, max_reach)));
+    patch.insert("sz".into(), Tag::Int(odd_side(config.sz, max_reach)));
     let _ = entity.merge_data(host, patch);
     host.block_entity_sync(pos);
     Ok(())
@@ -619,8 +619,9 @@ impl Tier {
         self.speeds()[0]
     }
 
-    /// The widest area this torch may cover, in blocks: 3x3x3, 9x9x9 or 27x27x27.
-    fn max_side(self) -> i32 {
+    /// The furthest this tier may reach on one axis: 3, 9 or 27 blocks out from the torch, so the
+    /// area it covers is 7x7x7, 19x19x19 or 55x55x55.
+    fn max_reach(self) -> i32 {
         match self {
             Tier::Normal => 3,
             Tier::Advanced => 9,
@@ -671,9 +672,9 @@ impl BlockEntityPart for Torch {
         let mut data = Compound::new();
         data.insert("active".into(), Tag::Byte(0));
         data.insert("speed".into(), Tag::Int(tier.default_speed()));
-        data.insert("sx".into(), Tag::Int(3));
+        data.insert("sx".into(), Tag::Int(1));
         data.insert("sy".into(), Tag::Int(1));
-        data.insert("sz".into(), Tag::Int(3));
+        data.insert("sz".into(), Tag::Int(1));
         Some(data)
     }
 
@@ -697,16 +698,16 @@ impl BlockEntityPart for Torch {
         if speed <= 0 {
             return;
         }
-        // The area is stored as its width in blocks, so a super torch at its widest reads 27.
-        let sx = odd_side(int(data, "sx", 3), MAX_SIDE);
-        let sy = odd_side(int(data, "sy", 1), MAX_SIDE);
-        let sz = odd_side(int(data, "sz", 3), MAX_SIDE);
-        let (rx, ry, rz) = ((sx - 1) / 2, (sy - 1) / 2, (sz - 1) / 2);
+        // Each number is how far the area reaches out from the torch on that axis, so 1 covers
+        // 3x3x3 with the torch in the middle and 27 covers 55x55x55.
+        let rx = odd_side(int(data, "sx", 1), MAX_REACH);
+        let ry = odd_side(int(data, "sy", 1), MAX_REACH);
+        let rz = odd_side(int(data, "sz", 1), MAX_REACH);
         let Some(level) = host.level(host.dimension()) else {
             return;
         };
         let [x, y, z] = pos;
-        let (nx, ny, nz) = (i64::from(sx), i64::from(sy), i64::from(sz));
+        let (nx, ny, nz) = (span(rx), span(ry), span(rz));
         // Every cell of the area but the one the torch itself stands in.
         let cells = nx * ny * nz - 1;
         if cells <= 0 {
@@ -801,20 +802,7 @@ fn int(data: &Compound, key: &str, default: i32) -> i32 {
     }
 }
 
-/// Reads one side of the area: the stored width, else a radius from a torch saved before widths
-/// were stored, else the default. Always odd and never above the tier's maximum.
-fn side(data: &Compound, key: &str, radius_key: &str, default: i32, max: i32) -> i32 {
-    let stored = int(data, key, 0);
-    let value = if stored > 0 {
-        stored
-    } else {
-        let radius = int(data, radius_key, -1);
-        if radius >= 0 { 2 * radius + 1 } else { default }
-    };
-    odd_side(value, max)
-}
-
-/// Clamps a side of the area to 1..=max and rounds it up to an odd number of blocks.
+/// Clamps one axis of the area, the reach in blocks, to 1..=max and rounds it up to an odd number.
 fn odd_side(value: i32, max: i32) -> i32 {
     let value = value.clamp(1, max);
     if value % 2 == 0 {
@@ -822,6 +810,12 @@ fn odd_side(value: i32, max: i32) -> i32 {
     } else {
         value
     }
+}
+
+/// How many blocks one axis spans when the area reaches `reach` blocks out on both sides: the
+/// torch's own block plus twice the reach, so a reach of 1 covers 3 and a reach of 27 covers 55.
+fn span(reach: i32) -> i64 {
+    i64::from(reach) * 2 + 1
 }
 
 /// Nanoseconds since the mod first measured time, for the shared per-tick budget.

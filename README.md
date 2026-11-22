@@ -3,14 +3,15 @@
 Three accelerating torches for [Horizon](https://github.com/horizon-rust/horizon) 26.3, a native Rust mod.
 Inspired by [Torcherino](https://modrinth.com/mod/torcherino); original code and textures, no assets or code taken from it.
 
-| Tier | Speed | Largest area |
-| --- | --- | --- |
-| 加速火把 `accel_torch` | 100-400% | 3x3x3 |
-| 高级加速火把 `advanced_accel_torch` | 4000-16000% | 9x9x9 |
-| 超级加速火把 `super_accel_torch` | 160000-640000% | 27x27x27 |
+| Tier | Speed | Reach per axis | Largest area |
+| --- | --- | --- | --- |
+| 加速火把 `accel_torch` | 100-400% | 1 or 3 | up to 7x7x7 |
+| 高级加速火把 `advanced_accel_torch` | 4000-16000% | 1 to 9 | up to 19x19x19 |
+| 超级加速火把 `super_accel_torch` | 160000-640000% | 1 to 27 | up to 55x55x55 |
 
-Right-click a torch for its panel (X/Y/Z size, speed, on/off). A percentage is extra random ticks per block per tick;
-100% means one extra `randomTick` per block per tick, about 1365x vanilla's 3/4096 chance.
+Right-click a torch for its panel (X/Y/Z reach, speed, on/off). Each number is how far the area reaches out from the
+torch on that axis, so 1 covers 3x3x3 with the torch in the middle and 3 covers 7x7x7. A percentage is extra random
+ticks per block per tick; 100% means one extra `randomTick` per block per tick, about 1365x vanilla's 3/4096 chance.
 
 The panel takes the plain right click, the way a crafting table does, so `sneak + right-click` is what places a block
 against a torch. The server side cancels the click for a standing player and lets it through while the shift key is

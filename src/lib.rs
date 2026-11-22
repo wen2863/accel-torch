@@ -9,7 +9,7 @@
 //! may cover - 3 for an accel torch, 9 for an advanced one, 27 for a super one. Right-clicking
 //! opens the screen; the buttons send the changed value to the server, which checks it against
 //! the torch's tier and stores it.
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -39,12 +39,16 @@ const STATE_ID: &str = "accel_torch:state";
 const MAX_SPEED: i32 = 640_000;
 const MAX_SIDE: i32 = 27;
 
-/// What one running torch may spend in one tick. A whole 27x27x27 area at 640000% would be
-/// millions of random ticks, far more than a tick can pay for, so a pass covers as much of the
-/// area as these limits allow and the next tick carries on where it stopped.
+/// What all the running torches of a server together may spend in one tick: a whole 27x27x27
+/// area at 640000% would be millions of random ticks, far more than a tick can pay for, so the
+/// torches take turns at these limits and every pass starts where the previous one stopped.
 const MAX_CALLS_PER_TICK: i64 = 3_000;
 const CALL_TIME_BUDGET: Duration = Duration::from_millis(3);
 const ROUNDS_PER_CELL: i64 = 64;
+
+/// How far the player using a screen may stand from its torch: a setting is accepted only from
+/// the torch's own level and within this reach, as for any block they interact with.
+const MAX_SETTING_DISTANCE: f64 = 6.0;
 
 /// What one torch's screen sends when a button changes something.
 #[derive(Clone, Debug, PartialEq, Eq, Default, PayloadCodec)]
@@ -95,9 +99,12 @@ static SCREEN: Mutex<Option<Screen>> = Mutex::new(None);
 /// A change the next client tick sends (the input hooks only read the host).
 static PENDING: Mutex<Option<Config>> = Mutex::new(None);
 
-/// Which block of its area the next capped walk starts at, so a capped torch still covers
-/// every block of its area over a few ticks.
-static ROTATE: AtomicU64 = AtomicU64::new(0);
+/// The server tick the shared budget belongs to, the random ticks it has spent, the instant it
+/// runs out, and the clock those are measured on.
+static BUDGET_TICK: AtomicI64 = AtomicI64::new(i64::MIN);
+static BUDGET_CALLS: AtomicI64 = AtomicI64::new(0);
+static BUDGET_DEADLINE: AtomicU64 = AtomicU64::new(0);
+static CLOCK: OnceLock<Instant> = OnceLock::new();
 
 /// Done was pressed: the next client tick closes the screen.
 static CLOSE: AtomicBool = AtomicBool::new(false);
@@ -502,31 +509,51 @@ fn load(host: &dyn Host, level: mod_api::LevelRef, pos: [i32; 3], dim: &str, tie
     config
 }
 
-/// The server end of a screen change: check it against the torch and store it.
+/// The server end of a screen change: check it against the sender and the torch, then store it.
 fn apply(config: Config, context: &mut dyn IPayloadContext) -> Result<(), String> {
-    let host = context
-        .server_host()
-        .map_err(|error| format!("no server host: {error:?}"))?;
-    let level = host
-        .level(&config.dim)
-        .ok_or_else(|| format!("no such level: {}", config.dim))?;
+    let Ok(player) = context.player() else {
+        return Ok(());
+    };
+    let Ok(host) = context.server_host() else {
+        return Ok(());
+    };
+    // The packet names the level and the position: only the player standing in that level, close
+    // to that torch, may read or change it, whatever the packet says.
+    let sender_dimension = player
+        .dimension(&*host)
+        .map_or_else(String::new, |dimension| dimension.to_string());
     let pos = [config.x, config.y, config.z];
-    let block = level
-        .block(&*host, pos)
-        .ok_or_else(|| "no block there".to_owned())?;
-    let tier = tier_of(&*host, block).ok_or_else(|| "not an accel torch".to_owned())?;
+    let near = player.entity().position(&*host).is_some_and(|at| {
+        let dx = at[0] - (f64::from(pos[0]) + 0.5);
+        let dy = at[1] - (f64::from(pos[1]) + 0.5);
+        let dz = at[2] - (f64::from(pos[2]) + 0.5);
+        dx * dx + dy * dy + dz * dz <= MAX_SETTING_DISTANCE * MAX_SETTING_DISTANCE
+    });
+    if sender_dimension != config.dim || !near {
+        // Never fail the payload: a failed handler disconnects the sender. Just tell the player.
+        let _ = player.tell(host, Text::literal("加速火把：距离太远或不在同一维度"));
+        return Ok(());
+    }
+    let Some(level) = host.level(&config.dim) else {
+        return Ok(());
+    };
+    let Some(block) = level.block(&*host, pos) else {
+        return Ok(());
+    };
+    let Some(tier) = tier_of(&*host, block) else {
+        return Ok(());
+    };
     if config.kind == 1 {
         // A query: answer with what the torch really holds.
         let truth = load(&*host, level, pos, &config.dim, tier);
-        let reply = REPLY.get().ok_or_else(|| "no reply token".to_owned())?;
-        return reply
-            .reply(context, &truth)
-            .map(|_accepted| ())
-            .map_err(|error| format!("cannot answer: {error:?}"));
+        if let Some(reply) = REPLY.get() {
+            let _ = reply.reply(context, &truth);
+        }
+        return Ok(());
     }
-    let entity = host
-        .block_entity(level, pos)
-        .ok_or_else(|| "no block entity there".to_owned())?;
+    let Some(entity) = host.block_entity(level, pos) else {
+        return Ok(());
+    };
     let mut patch = Compound::new();
     patch.insert(
         "active".into(),
@@ -537,9 +564,7 @@ fn apply(config: Config, context: &mut dyn IPayloadContext) -> Result<(), String
     patch.insert("sx".into(), Tag::Int(odd_side(config.sx, max_side)));
     patch.insert("sy".into(), Tag::Int(odd_side(config.sy, max_side)));
     patch.insert("sz".into(), Tag::Int(odd_side(config.sz, max_side)));
-    entity
-        .merge_data(host, patch)
-        .map_err(|error| format!("cannot store settings: {error:?}"))?;
+    let _ = entity.merge_data(host, patch);
     host.block_entity_sync(pos);
     Ok(())
 }
@@ -647,9 +672,10 @@ impl BlockEntityPart for Torch {
     }
 
     /// Each tick, offer every block in range a share of random ticks - 100% is one extra
-    /// random tick per block per tick - and hand them to the level. The top settings of a
-    /// super torch would be millions of calls, so the walk stops at a call and a time budget
-    /// and starts at a rotating block, so a capped torch still covers its whole area.
+    /// random tick per block per tick - and hand them to the level. The top settings of a super
+    /// torch would be millions of calls, so all the torches of a server share one call and time
+    /// budget per tick, and each pass starts where the previous one stopped, so a capped torch
+    /// still covers its whole area over a few ticks.
     fn block_entity_tick(&self, host: &mut dyn ServerHost, event: &mut BlockEntityTickEvent<'_>) {
         *event.reply = BlockEntityTickReply::Unchanged;
         let pos = event.pos;
@@ -670,45 +696,52 @@ impl BlockEntityPart for Torch {
             return;
         };
         let [x, y, z] = pos;
-
-        // 100% is one extra random tick per block per tick.
-        let rounds = (speed / 100).max(1) as i64;
         let (nx, ny, nz) = (i64::from(sx), i64::from(sy), i64::from(sz));
         // Every cell of the area but the one the torch itself stands in.
         let cells = nx * ny * nz - 1;
         if cells <= 0 {
             return;
         }
-        // How many random ticks one block gets on a pass: its full share, trimmed to what the
-        // tick can pay for over the whole area. Whatever the pass does not reach is picked up by
-        // the next tick, which starts where this one stopped, so the area is covered in turn.
-        let per_cell = rounds
-            .min(ROUNDS_PER_CELL)
-            .min((MAX_CALLS_PER_TICK / cells).max(1));
-        let start = (ROTATE.load(Ordering::Relaxed) % cells as u64) as i64;
-        let center = (i64::from(rz) * ny + i64::from(ry)) * nx + i64::from(rx);
-        let started = Instant::now();
-        let mut calls = 0i64;
-        let mut visited = 0i64;
-        while visited < cells {
-            if calls & 31 == 0 && started.elapsed() >= CALL_TIME_BUDGET {
-                break;
+
+        // The budget is the server's, not this torch's: the first torch to tick in a tick renews
+        // it and every torch spends from the same share, so more torches never cost more than
+        // this in one tick.
+        let tick = level
+            .game_time(&*host)
+            .unwrap_or_else(|| (now_nanos() / 50_000_000) as i64);
+        begin_tick(tick);
+        let remaining = (MAX_CALLS_PER_TICK - BUDGET_CALLS.load(Ordering::Relaxed)).max(0);
+        if remaining > 0 {
+            // How many random ticks one block gets on a pass: its full share, trimmed to what is
+            // left of the tick. What a pass does not reach is picked up by the next one.
+            let rounds = (speed / 100).max(1) as i64;
+            let per_cell = rounds
+                .min(ROUNDS_PER_CELL)
+                .min((remaining / cells).max(1))
+                .min(remaining);
+            let visits = (remaining / per_cell).min(cells);
+            let start = start_index(pos, tick, cells);
+            let center = (i64::from(rz) * ny + i64::from(ry)) * nx + i64::from(rx);
+            let mut visited = 0i64;
+            while visited < visits {
+                if visited & 31 == 0 && now_nanos() >= BUDGET_DEADLINE.load(Ordering::Relaxed) {
+                    break;
+                }
+                let index = (start + visited) % cells;
+                // Step over the torch's own cell.
+                let index = if index >= center { index + 1 } else { index };
+                let at = [
+                    x + (index % nx) as i32 - rx,
+                    y + (index / nx % ny) as i32 - ry,
+                    z + (index / (nx * ny)) as i32 - rz,
+                ];
+                for _ in 0..per_cell {
+                    level.block_random_tick(host, at);
+                }
+                BUDGET_CALLS.fetch_add(per_cell, Ordering::Relaxed);
+                visited += 1;
             }
-            let index = (start + visited) % cells;
-            // Step over the torch's own cell.
-            let index = if index >= center { index + 1 } else { index };
-            let at = [
-                x + (index % nx) as i32 - rx,
-                y + (index / nx % ny) as i32 - ry,
-                z + (index / (nx * ny)) as i32 - rz,
-            ];
-            for _ in 0..per_cell {
-                level.block_random_tick(host, at);
-            }
-            calls += per_cell;
-            visited += 1;
         }
-        ROTATE.store(((start + visited) % cells) as u64, Ordering::Relaxed);
         // Now and then a spark over the flame, so a running torch shows its tier.
         if roll(0.35)
             && let (Some(sparks), Some(block)) = (SPARKS.get(), level.block(&*host, pos))
@@ -776,6 +809,35 @@ fn odd_side(value: i32, max: i32) -> i32 {
     } else {
         value
     }
+}
+
+/// Nanoseconds since the mod first measured time, for the shared per-tick budget.
+fn now_nanos() -> u64 {
+    let start = CLOCK.get_or_init(Instant::now);
+    Instant::now().duration_since(*start).as_nanos() as u64
+}
+
+/// Renews the shared budget when a new server tick reaches its first torch: the calls it may
+/// spend and the instant its time runs out.
+fn begin_tick(tick: i64) {
+    if BUDGET_TICK.swap(tick, Ordering::Relaxed) != tick {
+        BUDGET_CALLS.store(0, Ordering::Relaxed);
+        let deadline = now_nanos() + CALL_TIME_BUDGET.as_nanos() as u64;
+        BUDGET_DEADLINE.store(deadline, Ordering::Relaxed);
+    }
+}
+
+/// Where a capped pass starts: from the torch's position and the tick, so two torches never
+/// share a cursor and each covers its area in a different order.
+fn start_index(pos: [i32; 3], tick: i64, cells: i64) -> i64 {
+    let mut hash = 0x9e37_79b9_7f4a_7c15u64;
+    for value in pos {
+        hash = (hash ^ value as i64 as u64).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        hash = hash.rotate_left(23);
+    }
+    hash ^= tick as u64;
+    hash = hash.wrapping_mul(0x94d0_49bb_1331_11eb);
+    (hash % cells as u64) as i64
 }
 
 /// A small SplitMix64, so the mod needs no crate of its own for the rolls.

@@ -289,7 +289,7 @@ impl Hooks for Mod {
         ];
         event
             .draw
-            .fill([x - 8.0, y - 4.0, 208.0, 172.0], 0xC8_10_10_10);
+            .fill([x - 8.0, y - 4.0, 208.0, 154.0], 0xC8_10_10_10);
         event
             .draw
             .text(screen.tier.title(), [x + 10.0, y + 4.0], 0xFFFF_FFFF, false);
@@ -305,21 +305,7 @@ impl Hooks for Mod {
                 .draw
                 .text(value, [x + 122.0 - value_width, row_y], 0xFFFF_FF80, false);
         }
-        // The size of the whole area, so nobody has to work it out from the three rows.
-        let area = format!(
-            "{}x{}x{}",
-            screen.config.sx, screen.config.sy, screen.config.sz
-        );
-        let area_width = event.draw.text_width(&area);
-        event
-            .draw
-            .text("区域", [x + 10.0, y + 110.0], 0xFFC0_C0C0, false);
-        event.draw.text(
-            &area,
-            [x + 122.0 - area_width, y + 110.0],
-            0xFFFF_FF80,
-            false,
-        );
+
         // A refused label is not drawn; screen input remains usable.
         let _ = screen
             .widgets

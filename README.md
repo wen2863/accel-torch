@@ -38,7 +38,14 @@ This writes `target/horizon-mod/accel_torch.hmod`. To play it, run
 
 ## Layout
 
-- `src/lib.rs` — the whole mod: block entity, config panel, payloads, particles.
+- `src/lib.rs` — the hooks: registration, the right-click gate, and the client tick and screen entry points.
+- `src/tier.rs` — the three torches, their speed steps and reach limits.
+- `src/settings.rs` — what a torch stores, the payload the server checks, and the 6-block range check.
+- `src/screen.rs` — the settings panel: its widgets, its frame, its input.
+- `src/torch.rs` — the block entity: its tick, and the random ticks it hands to blocks in range.
+- `src/budget.rs` — the random-tick budget every torch shares, and each torch's fair share of it.
+- `src/spark.rs` — the spark a running torch shows, and the small random source behind it.
+- `src/util.rs` — reading a saved compound, and the odd reach numbers.
 - `assets/accel_torch/` — blockstates, models, textures (256x256 blocks, 16x16 items, 8x8 particles), lang.
 - `data/accel_torch/` — block, item, recipe, loot table and creative tab declarations.
 - `horizon-mod.toml` — manifest; pins game 26.3, horizon `0a875da`, mixins `e59da90`.
@@ -46,7 +53,7 @@ This writes `target/horizon-mod/accel_torch.hmod`. To play it, run
 ## Credits
 
 Written by **Wen** (concept, block and item textures, in-game testing) together with **DeepSeek**, an AI coding
-assistant that wrote most of `src/lib.rs` (block entity, tick scheduling, config screen, payloads) and set up the
+assistant that wrote most of `src/` (block entity, tick scheduling, config screen, payloads) and set up the
 packaging. Commits that contain AI-written code carry a `Co-authored-by: DeepSeek <noreply@deepseek.com>` trailer.
 Particle sprites started as programmatically generated placeholders and can be replaced freely.
 

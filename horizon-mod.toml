@@ -1,7 +1,7 @@
 id = "accel_torch"
-name = "加速火把"
-version = "0.2.0"
-description = "仿 Torcherino 的三档加速火把：加速火把、高级加速火把、超级加速火把，各自外观与粒子，右键可调范围与速度。"
+name = "加速火把 (Accel Torch)"
+version = "0.2.1"
+description = "仿 Torcherino 的三档加速火把：加速火把、高级加速火把、超级加速火把，各自外观与粒子，右键可调范围与速度。Three accelerating torches after Torcherino - Accel, Advanced and Super - each with its own look and particles; right-click to set the reach and the speed (100%-640000%)."
 authors = ["Wen"]
 # A native mod: Rust in src/, compiled by the launcher against the game build [native] pins, beside data/ and assets/.
 api = "0.2"
